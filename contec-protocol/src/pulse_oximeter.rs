@@ -6,7 +6,7 @@ use futures::io::{Result};
 use futures::ready;
 use futures::{future, AsyncRead, AsyncWrite, Future};
 
-pub struct Pulox<T>
+pub struct PulseOximeter<T>
 where
     T: AsyncRead,
     T: AsyncWrite,
@@ -30,7 +30,7 @@ pub trait OutgoingPackage {
     fn bytes(&self) -> [u8; 7];
 }
 
-impl<T: AsyncRead + AsyncWrite + Unpin> Pulox<T> {
+impl<T: AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
     pub fn new(port: T) -> Self {
         Self {
             port,
@@ -141,7 +141,7 @@ macro_rules! incoming_packages {
         }
         use incoming_package::*;
 
-        impl<T : AsyncRead + AsyncWrite + Unpin> Pulox<T> {
+        impl<T : AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
             pub fn next_package(&mut self) -> impl Future<Output = Result<IncomingPackage>> + '_ {
                 future::poll_fn(|cx| {
                     loop {

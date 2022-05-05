@@ -4,7 +4,7 @@ use futures::{FutureExt, Future};
 use contec_protocol::{
     incoming_package::{IncomingPackage},
     outgoing_package::{ControlCommand},
-    Pulox,
+    PulseOximeter,
 };
 use std::io::{stdout};
 use std::time::Duration;
@@ -29,20 +29,20 @@ async fn main() -> anyhow::Result<()> {
     let port = tokio_serial::SerialStream::open(&tokio_serial::new(cli.port, 115200))
         .context("Could not connect to device")?;
 
-    let mut pulox = Pulox::new(port.compat());
+    let mut device = PulseOximeter::new(port.compat());
 
     // Send StopRealTimeData and wait for FreeFeedback response
-    pulox.send(ControlCommand::StopRealTimeData).await?;
+    device.send(ControlCommand::StopRealTimeData).await?;
     loop {
-        match timeout(pulox.next_package()).await? {
+        match timeout(device.next_package()).await? {
             IncomingPackage::FreeFeedback(_) => break,
             _ => {}, //Ignore unexpected packages 
         }
     } 
 
     // Read device id 
-    pulox.send(ControlCommand::AskForDeviceIdentifier).await?;
-    match timeout(pulox.next_package()).await? {
+    device.send(ControlCommand::AskForDeviceIdentifier).await?;
+    match timeout(device.next_package()).await? {
         IncomingPackage::DeviceIdentifier(i) => {
             println!(
                 "Device identifier is '{}'", 
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Request real time data
-    pulox.send(ControlCommand::ContinuousRealTimeData).await?;
+    device.send(ControlCommand::ContinuousRealTimeData).await?;
 
     let mut interval = tokio::time::interval_at(
         Instant::now() + Duration::from_secs(5),
@@ -72,10 +72,10 @@ async fn main() -> anyhow::Result<()> {
             },
             // Send InformDeviceConnected every 5 seconds
             _ = interval.tick().fuse() => {
-                pulox.send(ControlCommand::InformDeviceConnected).await?;
+                device.send(ControlCommand::InformDeviceConnected).await?;
             },
             // Read incoming packages
-            package = timeout(pulox.next_package()).fuse() => {
+            package = timeout(device.next_package()).fuse() => {
                 match package? {
                     IncomingPackage::RealTimeData(d) => {
                         print!("\r{:5} │ {:4} │ {:5} {}{}", 
@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Stop real time data
-    pulox.send(ControlCommand::StopRealTimeData).await?;
+    device.send(ControlCommand::StopRealTimeData).await?;
 
     Ok(())
 }

@@ -1,4 +1,4 @@
-use crate::pulox::OutgoingPackage;
+use crate::pulse_oximeter::OutgoingPackage;
 
 pub enum ControlCommand {
     ContinuousRealTimeData,
