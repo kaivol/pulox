@@ -1,7 +1,7 @@
 use anyhow::{Result, Error, Context};
 use clap::Parser;
 use futures::{FutureExt, Future};
-use pulox_protocol::{
+use contec_protocol::{
     incoming_package::{IncomingPackage},
     outgoing_package::{ControlCommand},
     Pulox,

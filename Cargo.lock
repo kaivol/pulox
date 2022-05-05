@@ -119,6 +119,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "contec-protocol"
+version = "0.1.0"
+dependencies = [
+ "futures",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -456,18 +463,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "contec-protocol",
  "futures",
- "pulox-protocol",
  "tokio",
  "tokio-serial",
  "tokio-util",
-]
-
-[[package]]
-name = "pulox-protocol"
-version = "0.1.0"
-dependencies = [
- "futures",
 ]
 
 [[package]]
