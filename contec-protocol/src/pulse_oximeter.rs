@@ -1,8 +1,8 @@
 use crate::bit_ops::{get_bit, get_bit_range, set_bit};
 use crate::incoming_package::RealTimeData;
+use crate::{Error, Result};
 use core::pin::Pin;
 use core::task::Poll;
-use futures::io::Result;
 use futures::ready;
 use futures::{future, AsyncRead, AsyncWrite, Future};
 
@@ -47,7 +47,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
     }
 
     /// Send a package to the device.
-    /// 
+    ///
     /// Note that if a future returned by a previous call to this function was not polled until
     /// completion, the rest of the package of the previous call will be sent before the new
     /// package will be sent.
@@ -55,7 +55,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
     where
         P: private::OutgoingPackage,
     {
-        assert_eq!(get_bit(P::CODE, 7), false);
+        debug_assert_eq!(get_bit(P::CODE, 7), false);
 
         let (high_byte, data) = encode_high_byte(package.bytes());
 
@@ -78,11 +78,18 @@ impl<T: AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
                     buffer,
                     ref mut already_sent,
                 } => {
-                    let count =
-                        ready!(Pin::new(&mut self.port).poll_write(cx, &buffer[*already_sent..9]))?;
-                    assert!(count > 0);
-                    *already_sent += count;
-                    assert!(*already_sent <= 9);
+                    let slice = &buffer[*already_sent..9];
+                    let bytes_written = ready!(Pin::new(&mut self.port).poll_write(cx, slice))?;
+                    if bytes_written == 0 {
+                        Err(Error::DeviceWriteZero)?;
+                    }
+                    if bytes_written > slice.len() {
+                        Err(Error::DeviceWriteTooMuch {
+                            requested: slice.len(),
+                            reported: bytes_written,
+                        })?;
+                    }
+                    *already_sent += bytes_written;
                     if *already_sent == 9 {
                         self.outgoing = OutgoingStatus::None;
                         if !unfinished_send {
@@ -95,6 +102,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
     }
 }
 
+/// Encodes the high bits of `bytes` into an extra high byte
 fn encode_high_byte<const N: usize>(mut bytes: [u8; N]) -> (u8, [u8; N]) {
     let mut high_byte = 0b10000000u8;
     for (index, byte) in bytes.iter_mut().enumerate() {
@@ -104,13 +112,26 @@ fn encode_high_byte<const N: usize>(mut bytes: [u8; N]) -> (u8, [u8; N]) {
     (high_byte, bytes)
 }
 
-fn decode_high_byte<const N: usize>((high_byte, mut bytes): (u8, [u8; N])) -> [u8; N] {
-    assert_eq!(get_bit(high_byte, 7), true);
+/// Applies the high bits to `bytes`
+///
+/// Also verifies that all original bytes have their high bit set. On failure returns the index of
+/// the first invalid byte.
+fn decode_high_byte<const N: usize>(
+    (high_byte, mut bytes): (u8, [u8; N]),
+) -> core::result::Result<[u8; N], usize> {
+    fn check_bit(byte: u8, expected: bool, index: usize) -> core::result::Result<(), usize> {
+        if get_bit(byte, 7) != expected {
+            Err(index)
+        } else {
+            Ok(())
+        }
+    }
+    check_bit(high_byte, true, 0)?;
     for (index, byte) in bytes.iter_mut().enumerate() {
-        assert_eq!(get_bit(*byte, 7), true);
+        check_bit(*byte, true, index + 1)?;
         set_bit(byte, 7, get_bit(high_byte, index));
     }
-    bytes
+    Ok(bytes)
 }
 
 macro_rules! incoming_packages {
@@ -170,40 +191,64 @@ macro_rules! incoming_packages {
         impl<T : AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
             /// Receive the next package from the device.
             pub fn receive_package(&mut self) -> impl Future<Output = Result<IncomingPackage>> + '_ {
-                future::poll_fn(|cx| {
-                    loop {
-                        match self.incoming {
-                            IncomingStatus::None => {
-                                let mut code = [0u8];
-                                let count = ready!(Pin::new(&mut self.port).poll_read(cx, &mut code))?;
-                                assert_eq!(count, 1);
-                                match code {
-                                    $(
-                                        [$code] => self.incoming = IncomingStatus::$name {
-                                            buffer: [0; ($length + 1)],
-                                            received_bytes: 0
-                                        },
-                                    )*
-                                    c if get_bit(c[0], 7) => todo!(),
-                                    _ => todo!(),
+                future::poll_fn(|cx| loop {
+                    match self.incoming {
+                        IncomingStatus::None => {
+                            let mut code = [0u8];
+                            let count = ready!(Pin::new(&mut self.port).poll_read(cx, &mut code))?;
+                            if count == 0 {
+                                Err(Error::DeviceReadZero)?;
+                            }
+                            if count > 1 {
+                                Err(Error::DeviceReadTooMuch { requested: 1, reported: count })?;
+                            }
+                            match code[0] {
+                                $(
+                                    $code => self.incoming = IncomingStatus::$name {
+                                        buffer: [0; ($length + 1)],
+                                        received_bytes: 0
+                                    },
+                                )*
+                                c => Err(Error::UnknownTypeCode(c))?,
+                            }
+                        },
+                        $(
+                            IncomingStatus::$name { ref mut buffer, ref mut received_bytes } => {
+                                let slice = &mut buffer[*received_bytes..($length + 1)];
+                                let count =  ready!(Pin::new(&mut self.port).poll_read(cx, slice))?;
+                                if count == 0 {
+                                    Err(Error::DeviceReadZero)?;
+                                }
+                                if count > slice.len() {
+                                    Err(Error::DeviceReadTooMuch {
+                                        requested: slice.len(),
+                                        reported: count
+                                    })?;
+                                }
+                                *received_bytes += count;
+                                if *received_bytes == ($length + 1) {
+                                    let [high_byte, data @ ..] = *buffer;
+                                    let decoded = match decode_high_byte((high_byte, data)){
+                                        Ok(decoded) => decoded,
+                                        Err(invalid_index) => {
+                                            let mut bytes = [0; 8];
+                                            bytes[..$length+1].copy_from_slice(buffer);
+                                            Err(Error::InvalidPackageData {
+                                                code: $code,
+                                                bytes,
+                                                length: $length+1,
+                                                invalid_index
+                                            })?
+                                        }
+                                    };
+                                    let data = $name::from_bytes(decoded);
+
+                                    self.incoming = IncomingStatus::None;
+
+                                    return Poll::Ready(Ok(IncomingPackage::$name(data)))
                                 }
                             },
-                            $(
-                                IncomingStatus::$name { ref mut buffer, ref mut received_bytes } => {
-                                    let slice = &mut buffer[*received_bytes..($length + 1)];
-                                    *received_bytes += ready!(Pin::new(&mut self.port).poll_read(cx, slice))?;
-                                    if *received_bytes == ($length + 1) {
-                                        let [high_byte, data @ ..] = *buffer;
-                                        let decoded = decode_high_byte((high_byte, data));
-                                        let data = $name::from_bytes(decoded);
-
-                                        self.incoming = IncomingStatus::None;
-
-                                        return Poll::Ready(Ok(IncomingPackage::$name(data)))
-                                    }
-                                },
-                            )*
-                        }
+                        )*
                     }
                 })
             }
@@ -268,7 +313,7 @@ mod test {
     #[test]
     fn test_decode_high_byte() {
         assert_eq!(
-            decode_high_byte((0b10001010, [0x80, 0xFF, 0x80, 0xFF])),
+            decode_high_byte((0b10001010, [0x80, 0xFF, 0x80, 0xFF])).unwrap(),
             [0x00, 0xFF, 0x00, 0xFF]
         )
     }
@@ -276,8 +321,11 @@ mod test {
     #[test]
     fn test_high_byte() {
         let raw = (0b10001010, [0x80, 0xFF, 0x80, 0xFF]);
-        assert_eq!(encode_high_byte(decode_high_byte(raw)), raw);
+        assert_eq!(encode_high_byte(decode_high_byte(raw).unwrap()), raw);
         let decoded = [0x00, 0xFF, 0x00, 0xFF];
-        assert_eq!(decode_high_byte(encode_high_byte(decoded)), decoded);
+        assert_eq!(
+            decode_high_byte(encode_high_byte(decoded)).unwrap(),
+            decoded
+        );
     }
 }
