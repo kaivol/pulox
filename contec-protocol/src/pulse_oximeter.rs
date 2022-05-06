@@ -2,10 +2,14 @@ use crate::bit_ops::{get_bit, get_bit_range, set_bit};
 use crate::incoming_package::RealTimeData;
 use core::pin::Pin;
 use core::task::Poll;
-use futures::io::{Result};
+use futures::io::Result;
 use futures::ready;
 use futures::{future, AsyncRead, AsyncWrite, Future};
 
+/// Represents a connection with a pulse oximeter.
+///
+/// Use the [PulseOximeter::send_package()] and [PulseOximeter::receive_package] methods to
+/// communicate with the foobar device.
 pub struct PulseOximeter<T>
 where
     T: AsyncRead,
@@ -25,12 +29,15 @@ enum OutgoingStatus {
     },
 }
 
-pub trait OutgoingPackage {
-    const CODE: u8;
-    fn bytes(&self) -> [u8; 7];
+pub(crate) mod private {
+    pub trait OutgoingPackage {
+        const CODE: u8;
+        fn bytes(&self) -> [u8; 7];
+    }
 }
 
 impl<T: AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
+    /// Create a pulse oximeter interface, using the given `port` for communication.
     pub fn new(port: T) -> Self {
         Self {
             port,
@@ -39,7 +46,15 @@ impl<T: AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
         }
     }
 
-    pub fn send<P>(&mut self, package: P) -> impl Future<Output = Result<()>> + '_ where P: OutgoingPackage {
+    /// Send a package to the device.
+    /// 
+    /// Note that if a future returned by a previous call to this function was not polled until
+    /// completion, the rest of the package of the previous call will be sent before the new
+    /// package will be sent.
+    pub fn send_package<P>(&mut self, package: P) -> impl Future<Output = Result<()>> + '_
+    where
+        P: private::OutgoingPackage,
+    {
         assert_eq!(get_bit(P::CODE, 7), false);
 
         let (high_byte, data) = encode_high_byte(package.bytes());
@@ -63,9 +78,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
                     buffer,
                     ref mut already_sent,
                 } => {
-                    let count = ready!(
-                        Pin::new(&mut self.port).poll_write(cx, &buffer[*already_sent..9])
-                    )?;
+                    let count =
+                        ready!(Pin::new(&mut self.port).poll_write(cx, &buffer[*already_sent..9]))?;
                     assert!(count > 0);
                     *already_sent += count;
                     assert!(*already_sent <= 9);
@@ -102,28 +116,40 @@ fn decode_high_byte<const N: usize>((high_byte, mut bytes): (u8, [u8; N])) -> [u
 macro_rules! incoming_packages {
     (
         $(
+            $(#[$outer:meta])*
             $code:literal => |$bytes:ident: [u8; $length:literal]| $name:ident {
-                $($field_name:ident: $field_type:ty = $field_const:expr),*$(,)?
+                $(
+                    $(#[$field_meta:meta])*
+                    $field_vis:vis $field_name:ident: $field_type:ty = $field_const:expr
+                ),*$(,)?
             }
         ),*$(,)?
     ) => {
+        /// Packages sent by the device.
         pub mod incoming_package {
             use super::*;
 
+            /// A Package sent by the device.
             #[derive(Debug)]
             pub enum IncomingPackage {
                 $(
+                    $(#[$outer])*
                     $name($name),
                 )*
             }
 
             $(
+                $(#[$outer])*
                 #[derive(Debug)]
                 pub struct $name {
-                    $(pub $field_name: $field_type,)*
+                    $(
+                        $(#[$field_meta])*
+                        $field_vis $field_name: $field_type,
+                    )*
                 }
 
                 impl $name {
+                    /// Create a new Package from the given byte array
                     pub fn from_bytes($bytes: [u8; $length]) -> Self {
                         $name {
                             $($field_name: $field_const,)*
@@ -142,7 +168,8 @@ macro_rules! incoming_packages {
         use incoming_package::*;
 
         impl<T : AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
-            pub fn next_package(&mut self) -> impl Future<Output = Result<IncomingPackage>> + '_ {
+            /// Receive the next package from the device.
+            pub fn receive_package(&mut self) -> impl Future<Output = Result<IncomingPackage>> + '_ {
                 future::poll_fn(|cx| {
                     loop {
                         match self.incoming {
@@ -185,26 +212,44 @@ macro_rules! incoming_packages {
 }
 
 incoming_packages! {
+    /// Real time data
     0x01 => |bytes: [u8; 7]| RealTimeData {
-        signal_strength: u8 = get_bit_range(bytes[0], 0..=3),
-        searching_time_too_long: bool = get_bit(bytes[0], 4),
-        low_spo2: bool = get_bit(bytes[0], 5),
-        pulse_beep: bool = get_bit(bytes[0], 6),
-        probe_errors: bool = get_bit(bytes[0], 7),
-        pulse_waveform: u8 = get_bit_range(bytes[1], 0..=6),
-        searching_pulse: bool = get_bit(bytes[1], 7),
-        bar_graph: u8 = get_bit_range(bytes[2], 0..=3),
-        pi_invalid: bool = get_bit(bytes[2], 4),
-        pulse_rate: u8 = bytes[3],
-        spo2: u8 = bytes[4],
-        pi: u16 = (bytes[5] as u16) + ((bytes[6] as u16) << 8)
+        /// Signal strength
+        pub signal_strength: u8 = get_bit_range(bytes[0], 0..=3),
+        /// Searhcing time too long
+        pub searching_time_too_long: bool = get_bit(bytes[0], 4),
+        /// Low SpO2
+        pub low_spo2: bool = get_bit(bytes[0], 5),
+        /// Pulse beep
+        pub pulse_beep: bool = get_bit(bytes[0], 6),
+        /// Probe errors
+        pub probe_errors: bool = get_bit(bytes[0], 7),
+        /// Pulse waveform
+        pub pulse_waveform: u8 = get_bit_range(bytes[1], 0..=6),
+        /// Searching pulse
+        pub searching_pulse: bool = get_bit(bytes[1], 7),
+        /// Bar graph
+        pub bar_graph: u8 = get_bit_range(bytes[2], 0..=3),
+        /// PI invalid
+        pub pi_invalid: bool = get_bit(bytes[2], 4),
+        /// Pulse rate
+        pub pulse_rate: u8 = bytes[3],
+        /// SpO2
+        pub spo2: u8 = bytes[4],
+        /// PI
+        pub pi: u16 = (bytes[5] as u16) + ((bytes[6] as u16) << 8)
     },
+    /// Device identifier
     0x04 => |bytes: [u8; 7]| DeviceIdentifier {
-        identifier: [u8; 7] = bytes,
+        /// Identifier
+        pub identifier: [u8; 7] = bytes,
     },
+    /// Device free feedback
     0x0C => |_bytes: [u8; 0]| FreeFeedback {},
+    /// Device disconnect notice
     0x0D => |bytes: [u8; 1]| DisconnectNotice {
-        reason: u8 = bytes[0],
+        /// Disconnect reason
+        pub reason: u8 = bytes[0],
     },
 }
 

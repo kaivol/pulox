@@ -32,17 +32,17 @@ async fn main() -> anyhow::Result<()> {
     let mut device = PulseOximeter::new(port.compat());
 
     // Send StopRealTimeData and wait for FreeFeedback response
-    device.send(ControlCommand::StopRealTimeData).await?;
+    device.send_package(ControlCommand::StopRealTimeData).await?;
     loop {
-        match timeout(device.next_package()).await? {
+        match timeout(device.receive_package()).await? {
             IncomingPackage::FreeFeedback(_) => break,
             _ => {}, //Ignore unexpected packages 
         }
     } 
 
     // Read device id 
-    device.send(ControlCommand::AskForDeviceIdentifier).await?;
-    match timeout(device.next_package()).await? {
+    device.send_package(ControlCommand::AskForDeviceIdentifier).await?;
+    match timeout(device.receive_package()).await? {
         IncomingPackage::DeviceIdentifier(i) => {
             println!(
                 "Device identifier is '{}'", 
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Request real time data
-    device.send(ControlCommand::ContinuousRealTimeData).await?;
+    device.send_package(ControlCommand::ContinuousRealTimeData).await?;
 
     let mut interval = tokio::time::interval_at(
         Instant::now() + Duration::from_secs(5),
@@ -72,10 +72,10 @@ async fn main() -> anyhow::Result<()> {
             },
             // Send InformDeviceConnected every 5 seconds
             _ = interval.tick().fuse() => {
-                device.send(ControlCommand::InformDeviceConnected).await?;
+                device.send_package(ControlCommand::InformDeviceConnected).await?;
             },
             // Read incoming packages
-            package = timeout(device.next_package()).fuse() => {
+            package = timeout(device.receive_package()).fuse() => {
                 match package? {
                     IncomingPackage::RealTimeData(d) => {
                         print!("\r{:5} │ {:4} │ {:5} {}{}", 
@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Stop real time data
-    device.send(ControlCommand::StopRealTimeData).await?;
+    device.send_package(ControlCommand::StopRealTimeData).await?;
 
     Ok(())
 }

@@ -1,9 +1,16 @@
-use crate::pulse_oximeter::OutgoingPackage;
+//! Packages sent to the device
 
+use crate::pulse_oximeter::private::OutgoingPackage;
+
+/// Control command 
 pub enum ControlCommand {
+    /// Ask device to start sending real time data
     ContinuousRealTimeData,
+    /// Stop sending real time data 
     StopRealTimeData,
+    /// Inform the device that it is still connected
     InformDeviceConnected,
+    /// Ask for device identifier
     AskForDeviceIdentifier,
 }
 
@@ -20,16 +27,20 @@ impl OutgoingPackage for ControlCommand {
     }
 }
 
-pub struct SetDeviceId([u8;7]);
+/// Set new device identifier
+pub struct SetDeviceId([u8; 7]);
 
 impl SetDeviceId {
+    /// Create new set device identifier package 
     pub fn new(id: impl AsRef<[u8]>) -> Self {
         let str: [u8; 7] = id.as_ref().try_into().expect("Wrong length");
-        if !str.iter().all(|c| matches!(c, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' )) {
+        if !str
+            .iter()
+            .all(|c| matches!(c, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' ))
+        {
             panic!("Invalid character")
         }
         Self(str)
-        
     }
 }
 
@@ -40,5 +51,3 @@ impl OutgoingPackage for SetDeviceId {
         self.0
     }
 }
-
-
