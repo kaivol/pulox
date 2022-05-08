@@ -9,3 +9,9 @@ pub use pulse_oximeter::incoming_package;
 pub use pulse_oximeter::PulseOximeter;
 
 pub mod outgoing_package;
+
+mod error;
+pub use error::Error;
+
+/// A specialized `Result` type that provides device communcation error information.
+pub type Result<T> = core::result::Result<T, Error>;
