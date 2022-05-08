@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// A specialized `Error` type that provides device and communcation error information.
+/// A specialized `Error` type that provides device communcation error information.
 #[derive(Error, Debug)]
 pub enum Error {
     /// communicating with the device failed
