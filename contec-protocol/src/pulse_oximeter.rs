@@ -51,6 +51,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
     /// Note that if a future returned by a previous call to this function was not polled until
     /// completion, the rest of the package of the previous call will be sent before the new
     /// package will be sent.
+    #[allow(clippy::bool_assert_comparison)]
     pub fn send_package<P>(&mut self, package: P) -> impl Future<Output = Result<()>> + '_
     where
         P: private::OutgoingPackage,
@@ -81,13 +82,14 @@ impl<T: AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
                     let slice = &buffer[*already_sent..9];
                     let bytes_written = ready!(Pin::new(&mut self.port).poll_write(cx, slice))?;
                     if bytes_written == 0 {
-                        Err(Error::DeviceWriteZero)?;
+                        return Err(Error::DeviceWriteZero).into();
                     }
                     if bytes_written > slice.len() {
-                        Err(Error::DeviceWriteTooMuch {
+                        return Err(Error::DeviceWriteTooMuch {
                             requested: slice.len(),
                             reported: bytes_written,
-                        })?;
+                        })
+                        .into();
                     }
                     *already_sent += bytes_written;
                     if *already_sent == 9 {
@@ -197,10 +199,10 @@ macro_rules! incoming_packages {
                             let mut code = [0u8];
                             let count = ready!(Pin::new(&mut self.port).poll_read(cx, &mut code))?;
                             if count == 0 {
-                                Err(Error::DeviceReadZero)?;
+                                return Err(Error::DeviceReadZero).into();
                             }
                             if count > 1 {
-                                Err(Error::DeviceReadTooMuch { requested: 1, reported: count })?;
+                                return Err(Error::DeviceReadTooMuch { requested: 1, reported: count }).into();
                             }
                             match code[0] {
                                 $(
@@ -209,7 +211,7 @@ macro_rules! incoming_packages {
                                         received_bytes: 0
                                     },
                                 )*
-                                c => Err(Error::UnknownTypeCode(c))?,
+                                c => return Err(Error::UnknownTypeCode(c)).into(),
                             }
                         },
                         $(
@@ -217,13 +219,13 @@ macro_rules! incoming_packages {
                                 let slice = &mut buffer[*received_bytes..($length + 1)];
                                 let count =  ready!(Pin::new(&mut self.port).poll_read(cx, slice))?;
                                 if count == 0 {
-                                    Err(Error::DeviceReadZero)?;
+                                    return Err(Error::DeviceReadZero).into();
                                 }
                                 if count > slice.len() {
-                                    Err(Error::DeviceReadTooMuch {
+                                    return  Err(Error::DeviceReadTooMuch {
                                         requested: slice.len(),
                                         reported: count
-                                    })?;
+                                    }).into();
                                 }
                                 *received_bytes += count;
                                 if *received_bytes == ($length + 1) {
@@ -233,12 +235,12 @@ macro_rules! incoming_packages {
                                         Err(invalid_index) => {
                                             let mut bytes = [0; 8];
                                             bytes[..$length+1].copy_from_slice(buffer);
-                                            Err(Error::InvalidPackageData {
+                                            return Err(Error::InvalidPackageData {
                                                 code: $code,
                                                 bytes,
                                                 length: $length+1,
                                                 invalid_index
-                                            })?
+                                            }).into();
                                         }
                                     };
                                     let data = $name::from_bytes(decoded);

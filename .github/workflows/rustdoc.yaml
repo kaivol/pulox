@@ -16,12 +16,15 @@ jobs:
       uses: actions-rs/toolchain@v1
       with:
         toolchain: stable
-        profile: minimal
         override: true
+        profile: minimal
         components: rust-docs
 
     - name: Build Documentation
-      run: cargo doc -p contec-protocol --no-deps
+      uses: actions-rs/cargo@v1
+      with:
+        command: doc
+        args: -p contec-protocol --no-deps
 
     - name: Deploy Docs
       uses: peaceiris/actions-gh-pages@v3

@@ -13,11 +13,11 @@ pub enum Error {
 
     /// devices reported more bytes written than requested
     #[error("tried to write '{requested}' bytes, but device reported '{reported}' bytes written")]
-    DeviceWriteTooMuch { 
+    DeviceWriteTooMuch {
         /// number of requested bytes
-        requested: usize, 
+        requested: usize,
         /// number of reportedly written bytes
-        reported: usize ,
+        reported: usize,
     },
 
     /// device reported '0' bytes read
@@ -26,11 +26,11 @@ pub enum Error {
 
     /// devices reported more bytes read than requested
     #[error("tried to read '{requested}' bytes, but device reported '{reported}' bytes read")]
-    DeviceReadTooMuch { 
+    DeviceReadTooMuch {
         /// number of requested bytes
-        requested: usize, 
+        requested: usize,
         /// number of reportedly read bytes
-        reported: usize 
+        reported: usize,
     },
 
     /// invalid package

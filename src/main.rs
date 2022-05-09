@@ -5,6 +5,7 @@ use contec_protocol::{
 };
 use futures::{Future, FutureExt};
 use std::io::stdout;
+use std::io::Write;
 use std::time::Duration;
 use tokio::time::Instant;
 use tokio_util::compat::TokioAsyncReadCompatExt;
@@ -32,9 +33,9 @@ async fn main() -> Result<()> {
     // Send StopRealTimeData and wait for FreeFeedback response
     device.send_package(ControlCommand::StopRealTimeData).await?;
     loop {
-        match timeout(device.receive_package()).await? {
-            IncomingPackage::FreeFeedback(_) => break,
-            _ => {} //Ignore unexpected packages
+        // Ignore unexpected packages
+        if let IncomingPackage::FreeFeedback(_) = timeout(device.receive_package()).await? {
+            break;
         }
     }
 
@@ -47,7 +48,7 @@ async fn main() -> Result<()> {
                 core::str::from_utf8(&i.identifier).context("Received invalid identifier")?
             );
         }
-        p => Err(Error::msg(format!("Unexpected Package {p:?}")))?,
+        p => return Err(Error::msg(format!("Unexpected Package {p:?}"))),
     }
 
     // Request real time data
@@ -83,12 +84,9 @@ async fn main() -> Result<()> {
                             "■".repeat(d.bar_graph.into()),
                             " ".repeat((15 - d.bar_graph).into()),
                         );
-                        use std::io::Write;
                         stdout().flush()?;
                     },
-                    p => {
-                        Err(Error::msg(format!("Unexpected Package {p:?}")))?
-                    }
+                    p => return Err(Error::msg(format!("Unexpected Package {p:?}"))),
                 }
             }
         }
