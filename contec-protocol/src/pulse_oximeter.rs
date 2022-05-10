@@ -291,12 +291,121 @@ incoming_packages! {
         /// Identifier
         pub identifier: [u8; 7] = bytes,
     },
+    /// User Information
+    0x05 => |bytes: [u8; 7]| UserInformation {
+        /// User Index Number
+        pub user_index: u8 = bytes[0],
+        /// User Information
+        pub user_info: [u8; 6] = [bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6]]
+    },
+    /// Storage start time(date)
+    0x07 => |bytes: [u8; 6]| StorageStartTimeDate {
+        /// User Index Number
+        pub user_index: u8 = bytes[0],
+        /// Storage Segment Number
+        pub storage_segment: u8 = bytes[1],
+        /// Year
+        pub year: u16 = (bytes[2] as u16) + ((bytes[3] as u16) << 8),
+        /// Month
+        pub month: u8 = bytes[4],
+        /// Day
+        pub day: u8 = bytes[5],
+    },
+    /// Storage start time(time)
+    0x12 => |bytes: [u8; 6]| StorageStartTimeTime {
+        /// User Index Number
+        pub user_index: u8 = bytes[0],
+        /// Storage Segment Number
+        pub storage_segment: u8 = bytes[1],
+        /// Hour
+        pub hour: u8 = bytes[2],
+        /// Minutes
+        pub minute: u8 = bytes[3],
+        /// Seconds
+        pub second: u8 = bytes[4],
+    },
+    /// Storage Data Length
+    0x08 => |bytes: [u8; 6]| StorageDataLength {
+        /// User Index Number
+        pub user_index: u8 = bytes[0],
+        /// Data Segment Number
+        pub data_segment: u8 = bytes[1],
+        /// Data segment length
+        pub length: u32 =
+            (bytes[2] as u32) + ((bytes[3] as u32) << 8) + ((bytes[4] as u32) << 16) + ((bytes[5] as u32) << 24),
+    },
+    /// Storage Data with PI
+    0x09 => |bytes: [u8; 4]| StorageDataWithPI {
+        /// SpO2
+        pub spo2: u8 = bytes[0],
+        /// Pulse rate
+        pub pulse_rate: u8 = bytes[1],
+        /// Perfusion Index
+        pub pi: u16 = (bytes[2] as u16) + ((bytes[3] as u16) << 8),
+    },
+    /// Storage Data Segment Amount
+    0x0A => |bytes: [u8; 2]| StorageDataSegmentAmount {
+        /// User Index Number
+        pub user_index: u8 = bytes[0],
+        /// Segment Amount
+        pub segment_amount: u8 = bytes[1],
+    },
+    /// Command Feedback
+    0x0B => |bytes: [u8; 2]| CommandFeedback {
+        /// Command
+        pub command: u8 = bytes[0],
+        /// Reason Code
+        pub reason: u8 = bytes[1],
+    },
     /// Device free feedback
     0x0C => |_bytes: [u8; 0]| FreeFeedback {},
     /// Device disconnect notice
     0x0D => |bytes: [u8; 1]| DisconnectNotice {
         /// Disconnect reason
         pub reason: u8 = bytes[0],
+    },
+    /// PI Identifiers
+    0x0E => |bytes: [u8; 1]| PIIdentifiers {
+        /// Whether to support PI in real-time data
+        pub pi_support: u8 = bytes[0],
+    },
+    /// Storage Data
+    0x0F => |bytes: [u8; 6]| StorageData {
+        /// SpO2 entry 1
+        pub spo2_1: u8 = bytes[0],
+        /// Pulse rate entry 1
+        pub pulse_rate_1: u8 = bytes[1],
+        /// SpO2 entry 2
+        pub spo2_2: u8 = bytes[2],
+        /// Pulse rate entry 2
+        pub pulse_rate_2: u8 = bytes[3],
+        /// SpO2 entry 3
+        pub spo2_3: u8 = bytes[4],
+        /// Pulse rate entry 3
+        pub pulse_rate_3: u8 = bytes[5],
+    },
+    /// User Amount
+    0x10 => |bytes: [u8; 1]| UserAmount {
+        /// Total User Number
+        pub total_user: u8 = bytes[0],
+    },
+    /// Device Notice
+    0x11 => |bytes: [u8; 7]| DeviceNotice {
+        /// Device Notice Type
+        pub device_notice: u8 = bytes[0],
+        /// Notice Information
+        pub device_info: [u8; 6] = [bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6]],
+    },
+    /// Storage Data Identifiers
+    0x15 => |bytes: [u8; 7]| StorageDataIdentifiers {
+        /// User Index Number
+        pub user_index: u8 = bytes[0],
+        /// Data Segment Number
+        pub data_segment: u8 = bytes[1],
+        /// PI Identifiers
+        pub pi_identifiers: u8 = bytes[2],
+        /// Retention
+        pub retention: [u8; 4] = [bytes[3], bytes[4], bytes[5], bytes[6]],
     },
 }
 
