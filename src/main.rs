@@ -1,24 +1,64 @@
-use anyhow::{Context, Error, Result};
-use clap::Parser;
-use contec_protocol::{
-    incoming_package::IncomingPackage, outgoing_package::ControlCommand, PulseOximeter,
-};
-use futures::{Future, FutureExt};
-use std::io::stdout;
-use std::io::Write;
+use std::io::{stdout, Write};
 use std::time::Duration;
+
+use anyhow::{anyhow, bail, ensure, Context, Error, Result};
+use chrono::{Datelike, Local, Timelike};
+use clap::{Parser, Subcommand};
+use contec_protocol::incoming_package::IncomingPackage;
+use contec_protocol::outgoing_package::ControlCommand;
+use contec_protocol::PulseOximeter;
+use futures::{AsyncRead, AsyncWrite, FutureExt};
 use tokio::time::Instant;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
 #[derive(Parser, Debug)]
 #[clap(author, version,
-    about = "Read data from Pulox PPG",
+    about = "Interact with Pulox PPG",
     long_about = None
 )]
 struct Cli {
+    #[clap(subcommand)]
+    command: Command,
+
     /// Name of serial port
-    #[clap(short, long, default_value = "COM3")]
+    #[clap(default_value = "COM3")]
     port: String,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Read real time data
+    Realtime,
+
+    /// Read storage data
+    Storage,
+
+    /// Delete storage data segment
+    ClearStorage,
+
+    /// Sync device time
+    SyncTime,
+}
+
+macro_rules! expect_package_with_timeout {
+    ($device:ident, $package:tt) => {
+        async {
+            match receive_package_with_timeout($device).await? {
+                IncomingPackage::$package(i) => Ok(i),
+                p => Err(anyhow!("Unexpected Package {p:?}")),
+            }
+        }
+    };
+}
+
+async fn receive_package_with_timeout<T: AsyncRead + AsyncWrite + Unpin>(
+    device: &mut PulseOximeter<T>,
+) -> Result<IncomingPackage> {
+    match tokio::time::timeout(Duration::from_secs(1), device.receive_package()).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(err)) => Err(Error::from(err)),
+        Err(_) => Err(Error::msg("Device did not send a response")),
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -34,30 +74,25 @@ async fn main() -> Result<()> {
     device.send_package(ControlCommand::StopRealTimeData).await?;
     loop {
         // Ignore unexpected packages
-        if let IncomingPackage::FreeFeedback(_) = timeout(device.receive_package()).await? {
+        if let IncomingPackage::FreeFeedback(_) = receive_package_with_timeout(&mut device).await? {
             break;
         }
     }
 
-    // Read device id
-    device.send_package(ControlCommand::AskForDeviceIdentifier).await?;
-    match timeout(device.receive_package()).await? {
-        IncomingPackage::DeviceIdentifier(i) => {
-            println!(
-                "Device identifier is '{}'",
-                core::str::from_utf8(&i.identifier).context("Received invalid identifier")?
-            );
-        }
-        p => return Err(Error::msg(format!("Unexpected Package {p:?}"))),
+    match cli.command {
+        Command::Realtime => realtime(&mut device).await,
+        Command::Storage => storage(&mut device).await,
+        Command::ClearStorage => clear_storage(&mut device).await,
+        Command::SyncTime => sync_time(&mut device).await,
     }
+}
 
+async fn realtime<T: AsyncRead + AsyncWrite + Unpin>(device: &mut PulseOximeter<T>) -> Result<()> {
     // Request real time data
     device.send_package(ControlCommand::ContinuousRealTimeData).await?;
 
-    let mut interval = tokio::time::interval_at(
-        Instant::now() + Duration::from_secs(5),
-        Duration::from_secs(5),
-    );
+    let mut interval =
+        tokio::time::interval_at(Instant::now() + Duration::from_secs(5), Duration::from_secs(5));
     println!("Press Ctrl-C to cancel");
     println!();
     println!("Error │ SpO2 │ Pulse ");
@@ -74,7 +109,7 @@ async fn main() -> Result<()> {
                 device.send_package(ControlCommand::InformDeviceConnected).await?;
             },
             // Read incoming packages
-            package = timeout(device.receive_package()).fuse() => {
+            package = receive_package_with_timeout(device).fuse() => {
                 match package? {
                     IncomingPackage::RealTimeData(d) => {
                         print!("\r{:5} │ {:4} │ {:5} {}{}",
@@ -86,7 +121,7 @@ async fn main() -> Result<()> {
                         );
                         stdout().flush()?;
                     },
-                    p => return Err(Error::msg(format!("Unexpected Package {p:?}"))),
+                    p => bail!("Unexpected Package {p:?}"),
                 }
             }
         }
@@ -98,13 +133,119 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn timeout<T, E>(fut: impl Future<Output = Result<T, E>>) -> Result<T>
-where
-    E: std::error::Error + Send + Sync + 'static,
-{
-    match tokio::time::timeout(Duration::from_secs(1), fut).await {
-        Ok(Ok(result)) => Ok(result),
-        Ok(Err(err)) => Err(Error::from(err)),
-        Err(_) => Err(Error::msg("Device did not send a response")),
+async fn storage<T: AsyncRead + AsyncWrite + Unpin>(device: &mut PulseOximeter<T>) -> Result<()> {
+    let (user_index, segment_index) = get_user_and_segment(device).await?;
+
+    // Asking for Storage start time
+    device
+        .send_package(ControlCommand::AskForStorageStartTime(user_index, segment_index))
+        .await?;
+    let d = expect_package_with_timeout!(device, StorageStartTimeDate).await?;
+    let t = expect_package_with_timeout!(device, StorageStartTimeTime).await?;
+    println!(
+        "The storage start time is {}:{}:{} on {}.{}.{}",
+        t.hour, t.minute, t.second, d.year, d.month, d.day
+    );
+
+    // Asking for data length
+    device
+        .send_package(ControlCommand::AskForStorageDataLength(user_index, segment_index))
+        .await?;
+    let data_length = expect_package_with_timeout!(device, StorageDataLength).await?.length;
+    println!("The storage data length is {}", data_length);
+
+    // Asking for storage data
+    device
+        .send_package(ControlCommand::AskForStorageData(user_index, segment_index))
+        .await?;
+
+    println!(" Index | SpO2 │ Pulse ");
+    println!("-------|------|----------------");
+    for i in (0..data_length).step_by(6) {
+        let d = expect_package_with_timeout!(device, StorageData).await?;
+        println!(" {:5} │ {:4} │ {:5}", i / 2, d.spo2_1, d.pulse_rate_1);
+        println!(" {:5} │ {:4} │ {:5}", i / 2 + 1, d.spo2_2, d.pulse_rate_2);
+        println!(" {:5} │ {:4} │ {:5}", i / 2 + 2, d.spo2_3, d.pulse_rate_3);
     }
+    Ok(())
+}
+
+async fn clear_storage<T: AsyncRead + AsyncWrite + Unpin>(
+    device: &mut PulseOximeter<T>,
+) -> Result<()> {
+    let (user_index, segment_index) = get_user_and_segment(device).await?;
+
+    // Asking for data length
+    device
+        .send_package(ControlCommand::DeleteStorageData(user_index, segment_index))
+        .await?;
+    let feedback = expect_package_with_timeout!(device, CommandFeedback).await?;
+    ensure!(feedback.code == 0, "Could not set device time: {:?}", feedback);
+
+    println!("Successfully deleted segment {} for user {}", segment_index, user_index);
+    Ok(())
+}
+
+async fn get_user_and_segment<T: AsyncRead + AsyncWrite + Unpin>(
+    device: &mut PulseOximeter<T>,
+) -> Result<(u8, u8)> {
+    // Asking for the amount of users
+    device.send_package(ControlCommand::AskForUserAmount).await?;
+    let user_count = expect_package_with_timeout!(device, UserAmount).await?.total_user;
+    let user_index: u8 = if user_count > 1 {
+        dialoguer::Input::new()
+            .with_prompt(format!("Choose the user index from 0 to {}", user_count - 1))
+            .interact_text()?
+    } else {
+        0
+    };
+
+    // Choosing the data segment
+    device
+        .send_package(ControlCommand::AskForStorageDataSegmentAmount(user_index))
+        .await?;
+    let segment_count = expect_package_with_timeout!(device, StorageDataSegmentAmount)
+        .await?
+        .segment_amount;
+    let segment_index: u8 = if user_count > 1 {
+        dialoguer::Input::new()
+            .with_prompt(format!("Choose the storage data segment from 0 to {}", segment_count - 1))
+            .interact_text()?
+    } else {
+        0
+    };
+    Ok((user_index, segment_index))
+}
+
+async fn sync_time<T: AsyncRead + AsyncWrite + Unpin>(device: &mut PulseOximeter<T>) -> Result<()> {
+    let now = Local::now();
+    let year = now.year();
+    let high_year = year / 100;
+    let low_year = year - high_year;
+
+    // Sending package with current date
+    device
+        .send_package(ControlCommand::SynchronizeDeviceDate(
+            high_year as u8,
+            low_year as u8,
+            now.month() as _,
+            now.day() as _,
+            now.weekday().num_days_from_sunday() as _,
+        ))
+        .await?;
+    let feedback = expect_package_with_timeout!(device, CommandFeedback).await?;
+    ensure!(feedback.code == 0, "Could not set device time: {:?}", feedback);
+
+    device
+        .send_package(ControlCommand::SynchronizeDeviceTime(
+            now.hour() as _,
+            now.minute() as _,
+            now.second() as _,
+        ))
+        .await?;
+    let feedback = expect_package_with_timeout!(device, CommandFeedback).await?;
+    ensure!(feedback.code == 0, "Could not set device time: {:?}", feedback);
+
+    println!("Successfully set device time");
+    Ok(())
 }

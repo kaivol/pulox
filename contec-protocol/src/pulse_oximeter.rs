@@ -1,21 +1,18 @@
+use core::pin::Pin;
+use core::task::Poll;
+use std::fmt::{Debug, Formatter};
+
+use futures::{future, ready, AsyncRead, AsyncWrite, Future};
+
 use crate::bit_ops::{get_bit, get_bit_range, set_bit};
 use crate::incoming_package::RealTimeData;
 use crate::{Error, Result};
-use core::pin::Pin;
-use core::task::Poll;
-use futures::ready;
-use futures::{future, AsyncRead, AsyncWrite, Future};
 
 /// Represents a connection with a pulse oximeter.
 ///
 /// Use the [PulseOximeter::send_package()] and [PulseOximeter::receive_package] methods to
 /// communicate with the foobar device.
-pub struct PulseOximeter<T>
-where
-    T: AsyncRead,
-    T: AsyncWrite,
-    T: Unpin,
-{
+pub struct PulseOximeter<T: AsyncRead + AsyncWrite + Unpin> {
     port: T,
     incoming: IncomingStatus,
     outgoing: OutgoingStatus,
@@ -102,6 +99,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
             }
         })
     }
+
+    /// Receive the next package from the device.
+    pub async fn receive_package(&mut self) -> Result<IncomingPackage> {
+        self.__receive_package().await
+    }
 }
 
 /// Encodes the high bits of `bytes` into an extra high byte
@@ -140,7 +142,7 @@ macro_rules! incoming_packages {
     (
         $(
             $(#[$outer:meta])*
-            $code:literal => |$bytes:ident: [u8; $length:literal]| $name:ident {
+            $code:literal => |$bytes:ident: [u8; $length:literal]| $(#[$outer2:meta])* $name:ident {
                 $(
                     $(#[$field_meta:meta])*
                     $field_vis:vis $field_name:ident: $field_type:ty = $field_const:expr
@@ -163,7 +165,7 @@ macro_rules! incoming_packages {
 
             $(
                 $(#[$outer])*
-                #[derive(Debug)]
+                $(#[$outer2])*
                 pub struct $name {
                     $(
                         $(#[$field_meta])*
@@ -173,7 +175,7 @@ macro_rules! incoming_packages {
 
                 impl $name {
                     /// Create a new Package from the given byte array
-                    pub fn from_bytes($bytes: [u8; $length]) -> Self {
+                    pub(super) fn from_bytes($bytes: [u8; $length]) -> Self {
                         $name {
                             $($field_name: $field_const,)*
                         }
@@ -191,8 +193,7 @@ macro_rules! incoming_packages {
         use incoming_package::*;
 
         impl<T : AsyncRead + AsyncWrite + Unpin> PulseOximeter<T> {
-            /// Receive the next package from the device.
-            pub fn receive_package(&mut self) -> impl Future<Output = Result<IncomingPackage>> + '_ {
+            fn __receive_package(&mut self) -> impl Future<Output = Result<IncomingPackage>> + '_ {
                 future::poll_fn(|cx| loop {
                     match self.incoming {
                         IncomingStatus::None => {
@@ -260,7 +261,7 @@ macro_rules! incoming_packages {
 
 incoming_packages! {
     /// Real time data
-    0x01 => |bytes: [u8; 7]| RealTimeData {
+    0x01 => |bytes: [u8; 7]| #[derive(Debug)] RealTimeData {
         /// Signal strength
         pub signal_strength: u8 = get_bit_range(bytes[0], 0..=3),
         /// Searhcing time too long
@@ -287,19 +288,19 @@ incoming_packages! {
         pub pi: u16 = (bytes[5] as u16) + ((bytes[6] as u16) << 8)
     },
     /// Device identifier
-    0x04 => |bytes: [u8; 7]| DeviceIdentifier {
+    0x04 => |bytes: [u8; 7]| #[derive(Debug)] DeviceIdentifier {
         /// Identifier
         pub identifier: [u8; 7] = bytes,
     },
     /// User Information
-    0x05 => |bytes: [u8; 7]| UserInformation {
+    0x05 => |bytes: [u8; 7]| #[derive(Debug)] UserInformation {
         /// User Index Number
         pub user_index: u8 = bytes[0],
         /// User Information
         pub user_info: [u8; 6] = [bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6]]
     },
     /// Storage start time(date)
-    0x07 => |bytes: [u8; 6]| StorageStartTimeDate {
+    0x07 => |bytes: [u8; 6]| #[derive(Debug)] StorageStartTimeDate {
         /// User Index Number
         pub user_index: u8 = bytes[0],
         /// Storage Segment Number
@@ -312,7 +313,7 @@ incoming_packages! {
         pub day: u8 = bytes[5],
     },
     /// Storage start time(time)
-    0x12 => |bytes: [u8; 6]| StorageStartTimeTime {
+    0x12 => |bytes: [u8; 6]| #[derive(Debug)] StorageStartTimeTime {
         /// User Index Number
         pub user_index: u8 = bytes[0],
         /// Storage Segment Number
@@ -325,7 +326,7 @@ incoming_packages! {
         pub second: u8 = bytes[4],
     },
     /// Storage Data Length
-    0x08 => |bytes: [u8; 6]| StorageDataLength {
+    0x08 => |bytes: [u8; 6]| #[derive(Debug)] StorageDataLength {
         /// User Index Number
         pub user_index: u8 = bytes[0],
         /// Data Segment Number
@@ -335,7 +336,7 @@ incoming_packages! {
             (bytes[2] as u32) + ((bytes[3] as u32) << 8) + ((bytes[4] as u32) << 16) + ((bytes[5] as u32) << 24),
     },
     /// Storage Data with PI
-    0x09 => |bytes: [u8; 4]| StorageDataWithPI {
+    0x09 => |bytes: [u8; 4]| #[derive(Debug)] StorageDataWithPI {
         /// SpO2
         pub spo2: u8 = bytes[0],
         /// Pulse rate
@@ -344,7 +345,7 @@ incoming_packages! {
         pub pi: u16 = (bytes[2] as u16) + ((bytes[3] as u16) << 8),
     },
     /// Storage Data Segment Amount
-    0x0A => |bytes: [u8; 2]| StorageDataSegmentAmount {
+    0x0A => |bytes: [u8; 2]| #[derive(Debug)] StorageDataSegmentAmount {
         /// User Index Number
         pub user_index: u8 = bytes[0],
         /// Segment Amount
@@ -355,22 +356,22 @@ incoming_packages! {
         /// Command
         pub command: u8 = bytes[0],
         /// Reason Code
-        pub reason: u8 = bytes[1],
+        pub code: u8 = bytes[1],
     },
     /// Device free feedback
-    0x0C => |_bytes: [u8; 0]| FreeFeedback {},
+    0x0C => |_bytes: [u8; 0]| #[derive(Debug)] FreeFeedback {},
     /// Device disconnect notice
-    0x0D => |bytes: [u8; 1]| DisconnectNotice {
+    0x0D => |bytes: [u8; 1]| #[derive(Debug)] DisconnectNotice {
         /// Disconnect reason
         pub reason: u8 = bytes[0],
     },
     /// PI Identifiers
-    0x0E => |bytes: [u8; 1]| PIIdentifiers {
+    0x0E => |bytes: [u8; 1]| #[derive(Debug)] PIIdentifiers {
         /// Whether to support PI in real-time data
         pub pi_support: u8 = bytes[0],
     },
     /// Storage Data
-    0x0F => |bytes: [u8; 6]| StorageData {
+    0x0F => |bytes: [u8; 6]| #[derive(Debug)] StorageData {
         /// SpO2 entry 1
         pub spo2_1: u8 = bytes[0],
         /// Pulse rate entry 1
@@ -385,19 +386,19 @@ incoming_packages! {
         pub pulse_rate_3: u8 = bytes[5],
     },
     /// User Amount
-    0x10 => |bytes: [u8; 1]| UserAmount {
+    0x10 => |bytes: [u8; 1]| #[derive(Debug)] UserAmount {
         /// Total User Number
         pub total_user: u8 = bytes[0],
     },
     /// Device Notice
-    0x11 => |bytes: [u8; 7]| DeviceNotice {
+    0x11 => |bytes: [u8; 7]| #[derive(Debug)] DeviceNotice {
         /// Device Notice Type
         pub device_notice: u8 = bytes[0],
         /// Notice Information
         pub device_info: [u8; 6] = [bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6]],
     },
     /// Storage Data Identifiers
-    0x15 => |bytes: [u8; 7]| StorageDataIdentifiers {
+    0x15 => |bytes: [u8; 7]| #[derive(Debug)] StorageDataIdentifiers {
         /// User Index Number
         pub user_index: u8 = bytes[0],
         /// Data Segment Number
@@ -407,6 +408,31 @@ incoming_packages! {
         /// Retention
         pub retention: [u8; 4] = [bytes[3], bytes[4], bytes[5], bytes[6]],
     },
+}
+
+impl CommandFeedback {
+    /// Meaning of this device command feedback
+    pub fn message(&self) -> &str {
+        match self.code {
+            0x00 => "Completed operation",
+            0x01 => "Shutdown device",
+            0x02 => "Exchange users",
+            0x03 => "Recording",
+            0x04 => "Failure to delete the storage data",
+            0x05 => "Not supported",
+            _ => "Unknown reason",
+        }
+    }
+}
+
+impl Debug for CommandFeedback {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandFeedback")
+            .field("command", &format_args!("{:#04X}", self.command))
+            .field("reason_code", &format_args!("{:#04X}", self.code))
+            .field("message", &format_args!("'{}'", self.message()))
+            .finish()
+    }
 }
 
 #[cfg(test)]
@@ -423,10 +449,9 @@ mod test {
 
     #[test]
     fn test_decode_high_byte() {
-        assert_eq!(
-            decode_high_byte((0b10001010, [0x80, 0xFF, 0x80, 0xFF])).unwrap(),
-            [0x00, 0xFF, 0x00, 0xFF]
-        )
+        assert_eq!(decode_high_byte((0b10001010, [0x80, 0xFF, 0x80, 0xFF])).unwrap(), [
+            0x00, 0xFF, 0x00, 0xFF
+        ])
     }
 
     #[test]
@@ -434,9 +459,6 @@ mod test {
         let raw = (0b10001010, [0x80, 0xFF, 0x80, 0xFF]);
         assert_eq!(encode_high_byte(decode_high_byte(raw).unwrap()), raw);
         let decoded = [0x00, 0xFF, 0x00, 0xFF];
-        assert_eq!(
-            decode_high_byte(encode_high_byte(decoded)).unwrap(),
-            decoded
-        );
+        assert_eq!(decode_high_byte(encode_high_byte(decoded)).unwrap(), decoded);
     }
 }
