@@ -16,6 +16,7 @@ jobs:
         toolchain: nightly
         override: true
         profile: minimal
+        components: rustfmt
     - name: Check formatting
       uses: actions-rs/cargo@v1
       with:
