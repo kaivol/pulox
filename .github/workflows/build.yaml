@@ -21,7 +21,8 @@ jobs:
       uses: actions-rs/cargo@v1
       with:
         command: fmt
-        args: +nightly --all -- --check
+        toolchain: nightly
+        args: --all -- --check
   
   cargo_test:
     name: Run cargo tests
