@@ -6,7 +6,7 @@ jobs:
   
   cargo_fmt:
     name: Check cargo formatting
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
@@ -26,7 +26,7 @@ jobs:
   
   cargo_test:
     name: Run cargo tests
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
@@ -36,6 +36,10 @@ jobs:
         toolchain: stable
         override: true
         profile: minimal
+    - name: Set up MATLAB
+      uses: matlab-actions/setup-matlab@v1
+      with:
+        release: R2022a
     - name: Run tests
       uses: actions-rs/cargo@v1
       with:
@@ -44,7 +48,7 @@ jobs:
 
   cargo_check:
     name: Cargo clippy
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
