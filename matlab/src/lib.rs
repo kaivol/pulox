@@ -1,5 +1,6 @@
 use std::mem::size_of;
 use std::os::raw::c_int;
+use std::panic::catch_unwind;
 use std::time::Duration;
 
 use anyhow::{ensure, Context, Error};
@@ -11,34 +12,12 @@ use tokio::time::Instant;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
 use crate::bindings::{
-    mexErrMsgTxt_800, mexPrintf_800, mxArray, mxClassID_mxINT8_CLASS, mxClassID_mxUINT8_CLASS,
-    mxComplexity_mxREAL, mxCreateNumericArray_800, mxGetUint8s_800, mxMalloc_800, mxSetN_800,
-    mxSetUint8s_800, mxUint8, size_t,
+    mexErrMsgTxt_800, mxArray, mxClassID_mxUINT8_CLASS, mxComplexity_mxREAL,
+    mxCreateNumericArray_800, mxMalloc_800, mxSetUint8s_800, mxUint8, size_t,
 };
 
 mod bindings;
-
-macro_rules! mx_println {
-    () => {
-        $crate::print!("\n")
-    };
-    ($($arg:tt)*) => {{
-        let args = format!($($arg)*);
-        #[allow(unused_unsafe)]
-        unsafe { mexPrintf_800(format!("{}\n\0", args).as_bytes() as *const _ as _) };
-    }};
-}
-
-macro_rules! expect_package_with_timeout {
-    ($device:ident, $package:tt) => {
-        async {
-            match receive_package_with_timeout($device).await? {
-                IncomingPackage::$package(i) => Ok(i),
-                p => Err(anyhow!("Unexpected Package {p:?}")),
-            }
-        }
-    };
-}
+mod util;
 
 async fn receive_package_with_timeout<T: AsyncRead + AsyncWrite + Unpin>(
     device: &mut PulseOximeter<T>,
@@ -50,7 +29,8 @@ async fn receive_package_with_timeout<T: AsyncRead + AsyncWrite + Unpin>(
     }
 }
 
-#[allow(unused_variables)]
+/// # Safety
+/// Function is called by Matlab
 #[no_mangle]
 pub unsafe extern "C" fn mexFunction(
     nlhs: c_int,
@@ -58,8 +38,17 @@ pub unsafe extern "C" fn mexFunction(
     nrhs: c_int,
     prhs: *mut *mut mxArray,
 ) {
-    if let Err(err) = main(nlhs, plhs, nrhs, prhs) {
-        mexErrMsgTxt_800(format!("{}\0", err).as_bytes() as *const _ as _);
+    match catch_unwind(|| main(nlhs, plhs, nrhs, prhs)) {
+        Err(err) => {
+            if let Some(s) = err.downcast_ref::<&str>() {
+                mexErrMsgTxt_800(format!("{}\0", s).as_bytes() as *const _ as _);
+            }
+            if let Some(s) = err.downcast_ref::<String>() {
+                mexErrMsgTxt_800(format!("{}\0", s).as_bytes() as *const _ as _);
+            }
+        }
+        Ok(Err(err)) => mexErrMsgTxt_800(format!("{}\0", err).as_bytes() as *const _ as _),
+        Ok(Ok(())) => {}
     }
 }
 
@@ -67,7 +56,7 @@ fn main(
     nlhs: c_int,
     plhs: *mut *mut mxArray,
     nrhs: c_int,
-    prhs: *mut *mut mxArray,
+    _prhs: *mut *mut mxArray,
 ) -> anyhow::Result<()> {
     ensure!(
         nlhs == 1 || nlhs == 0,
@@ -91,13 +80,13 @@ async fn main_async() -> anyhow::Result<*mut mxArray> {
     let port = tokio_serial::SerialStream::open(&tokio_serial::new("COM3", 115200))
         .context("Could not connect to device")?;
 
-    let mut device = &mut PulseOximeter::new(port.compat());
+    let device = &mut PulseOximeter::new(port.compat());
 
     // Send StopRealTimeData and wait for FreeFeedback response
     device.send_package(ControlCommand::StopRealTimeData).await?;
     loop {
         // Ignore unexpected packages
-        if let IncomingPackage::FreeFeedback(_) = receive_package_with_timeout(&mut device).await? {
+        if let IncomingPackage::FreeFeedback(_) = receive_package_with_timeout(device).await? {
             break;
         }
     }
@@ -123,9 +112,9 @@ async fn main_async() -> anyhow::Result<*mut mxArray> {
                 match package? {
                     IncomingPackage::RealTimeData(d) => {
                         unsafe {
-                            data.add(row*2).write(d.probe_errors);
-                            data.add(row*2+1).write(d.pulse_rate);
-                            data.add(row*2+2).write(d.spo2);
+                            data.add(row*3).write(if d.probe_errors { 1 } else { 0 });
+                            data.add(row*3+1).write(d.pulse_rate);
+                            data.add(row*3+2).write(d.spo2);
                         }
                         row += 1;
                         if row == NUM_TIMESTEPS {
