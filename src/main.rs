@@ -1,15 +1,19 @@
+mod output;
+
 use std::io::{stdout, Write};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, ensure, Context, Error, Result};
 use chrono::{Datelike, Local, Timelike};
-use clap::{Parser, Subcommand};
+use clap::{ArgEnum, Args, Parser, Subcommand};
 use contec_protocol::incoming_package::IncomingPackage;
 use contec_protocol::outgoing_package::ControlCommand;
 use contec_protocol::PulseOximeter;
 use futures::{AsyncRead, AsyncWrite, FutureExt};
 use tokio::time::Instant;
 use tokio_util::compat::TokioAsyncReadCompatExt;
+
+use crate::output::{CsvWriter, OutputMode, OutputWriter, Realtime, Storage};
 
 #[derive(Parser, Debug)]
 #[clap(author, version,
@@ -28,16 +32,57 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Read real time data
-    Realtime,
+    Realtime(RealtimeArgs),
 
     /// Read storage data
-    Storage,
+    Storage(StorageArgs),
 
     /// Delete storage data segment
     ClearStorage,
 
     /// Sync device time
     SyncTime,
+}
+
+#[derive(Args, Debug)]
+struct RealtimeArgs {
+    /// Output format
+    #[clap(long, short, arg_enum, value_parser, requires = "output")]
+    format: Option<OutputFormat>,
+    /// Output File
+    #[clap(long, short, requires = "format")]
+    output: Option<String>,
+    /// Show no output in console
+    #[clap(long)]
+    no_console: bool,
+}
+
+#[derive(Args, Debug)]
+struct StorageArgs {
+    /// Output format
+    #[clap(long, short, arg_enum, value_parser)]
+    format: OutputFormat,
+    /// Output File
+    #[clap(long, short)]
+    output: String,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
+enum OutputFormat {
+    Csv,
+}
+
+impl OutputFormat {
+    pub async fn get_writer<T: OutputMode>(
+        &self,
+        args: String,
+    ) -> Result<Box<dyn OutputWriter<T>>> {
+        let mut writer = match self {
+            OutputFormat::Csv => Box::new(CsvWriter::new(args).await?),
+        };
+        OutputWriter::<T>::init(writer.as_mut()).await?;
+        Ok(writer)
+    }
 }
 
 macro_rules! expect_package_with_timeout {
@@ -80,23 +125,35 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Command::Realtime => realtime(&mut device).await,
-        Command::Storage => storage(&mut device).await,
+        Command::Realtime(args) => realtime(&mut device, args).await,
+        Command::Storage(args) => storage(&mut device, args).await,
         Command::ClearStorage => clear_storage(&mut device).await,
         Command::SyncTime => sync_time(&mut device).await,
     }
 }
 
-async fn realtime<T: AsyncRead + AsyncWrite + Unpin>(device: &mut PulseOximeter<T>) -> Result<()> {
+async fn realtime<T: AsyncRead + AsyncWrite + Unpin>(
+    device: &mut PulseOximeter<T>,
+    args: RealtimeArgs,
+) -> Result<()> {
+    let mut writer = if let Some((format, output)) = args.format.zip(args.output) {
+        Some(format.get_writer::<Realtime>(output).await?)
+    } else {
+        None
+    };
+
     // Request real time data
     device.send_package(ControlCommand::ContinuousRealTimeData).await?;
 
     let mut interval =
         tokio::time::interval_at(Instant::now() + Duration::from_secs(5), Duration::from_secs(5));
-    println!("Press Ctrl-C to cancel");
-    println!();
-    println!("Error │ SpO2 │ Pulse ");
-    println!("══════╪══════╪══════════════════════");
+    if !args.no_console {
+        println!("Press Ctrl-C to cancel");
+        println!();
+        println!("Error │ SpO2 │ Pulse ");
+        println!("══════╪══════╪══════════════════════");
+    }
+    let mut samples = 0;
     loop {
         futures::select! {
             // Listen for Ctrl-C
@@ -112,14 +169,23 @@ async fn realtime<T: AsyncRead + AsyncWrite + Unpin>(device: &mut PulseOximeter<
             package = receive_package_with_timeout(device).fuse() => {
                 match package? {
                     IncomingPackage::RealTimeData(d) => {
-                        print!("\r{:5} │ {:4} │ {:5} {}{}",
-                            d.probe_errors,
-                            d.spo2,
-                            d.pulse_rate,
-                            "■".repeat(d.bar_graph.into()),
-                            " ".repeat((15 - d.bar_graph).into()),
-                        );
-                        stdout().flush()?;
+                        if !args.no_console {
+                            print!("\r{:5} │ {:4} │ {:5} {}{}",
+                                d.probe_errors,
+                                d.spo2,
+                                d.pulse_rate,
+                                "■".repeat(d.bar_graph.into()),
+                                " ".repeat((15 - d.bar_graph).into()),
+                            );
+                            stdout().flush()?;
+                        } else {
+                            print!("\rSamples:{samples:10}");
+                            stdout().flush()?;
+                            samples += 1;
+                        }
+                        if let Some(ref mut writer) = writer {
+                            writer.write_record(d).await?;
+                        }
                     },
                     p => bail!("Unexpected Package {p:?}"),
                 }
@@ -133,7 +199,12 @@ async fn realtime<T: AsyncRead + AsyncWrite + Unpin>(device: &mut PulseOximeter<
     Ok(())
 }
 
-async fn storage<T: AsyncRead + AsyncWrite + Unpin>(device: &mut PulseOximeter<T>) -> Result<()> {
+async fn storage<T: AsyncRead + AsyncWrite + Unpin>(
+    device: &mut PulseOximeter<T>,
+    args: StorageArgs,
+) -> Result<()> {
+    let mut writer = args.format.get_writer::<Storage>(args.output).await?;
+
     let (user_index, segment_index) = get_user_and_segment(device).await?;
 
     // Asking for Storage start time
@@ -152,21 +223,24 @@ async fn storage<T: AsyncRead + AsyncWrite + Unpin>(device: &mut PulseOximeter<T
         .send_package(ControlCommand::AskForStorageDataLength(user_index, segment_index))
         .await?;
     let data_length = expect_package_with_timeout!(device, StorageDataLength).await?.length;
-    println!("The storage data length is {}", data_length);
+    println!("The storage data length is {} bytes ({} samples)", data_length, data_length / 2);
 
     // Asking for storage data
     device
         .send_package(ControlCommand::AskForStorageData(user_index, segment_index))
         .await?;
 
-    println!(" Index | SpO2 │ Pulse ");
-    println!("-------|------|----------------");
     for i in (0..data_length).step_by(6) {
         let d = expect_package_with_timeout!(device, StorageData).await?;
-        println!(" {:5} │ {:4} │ {:5}", i / 2, d.spo2_1, d.pulse_rate_1);
-        println!(" {:5} │ {:4} │ {:5}", i / 2 + 1, d.spo2_2, d.pulse_rate_2);
-        println!(" {:5} │ {:4} │ {:5}", i / 2 + 2, d.spo2_3, d.pulse_rate_3);
+        writer.write_record((d.spo2_1, d.pulse_rate_1)).await?;
+        if i + 2 < data_length {
+            writer.write_record((d.spo2_2, d.pulse_rate_2)).await?;
+        }
+        if i + 4 < data_length {
+            writer.write_record((d.spo2_3, d.pulse_rate_3)).await?;
+        }
     }
+    println!("Finished reading and saving data");
     Ok(())
 }
 

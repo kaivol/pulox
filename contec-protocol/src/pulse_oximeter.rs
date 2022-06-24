@@ -261,10 +261,10 @@ macro_rules! incoming_packages {
 
 incoming_packages! {
     /// Real time data
-    0x01 => |bytes: [u8; 7]| #[derive(Debug)] RealTimeData {
+    0x01 => |bytes: [u8; 7]| #[derive(Debug, Copy, Clone)] RealTimeData {
         /// Signal strength
         pub signal_strength: u8 = get_bit_range(bytes[0], 0..=3),
-        /// Searhcing time too long
+        /// Searching time too long
         pub searching_time_too_long: bool = get_bit(bytes[0], 4),
         /// Low SpO2
         pub low_spo2: bool = get_bit(bytes[0], 5),
@@ -288,19 +288,19 @@ incoming_packages! {
         pub pi: u16 = (bytes[5] as u16) + ((bytes[6] as u16) << 8)
     },
     /// Device identifier
-    0x04 => |bytes: [u8; 7]| #[derive(Debug)] DeviceIdentifier {
+    0x04 => |bytes: [u8; 7]| #[derive(Debug, Copy, Clone)] DeviceIdentifier {
         /// Identifier
         pub identifier: [u8; 7] = bytes,
     },
     /// User Information
-    0x05 => |bytes: [u8; 7]| #[derive(Debug)] UserInformation {
+    0x05 => |bytes: [u8; 7]| #[derive(Debug, Copy, Clone)] UserInformation {
         /// User Index Number
         pub user_index: u8 = bytes[0],
         /// User Information
         pub user_info: [u8; 6] = [bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6]]
     },
     /// Storage start time(date)
-    0x07 => |bytes: [u8; 6]| #[derive(Debug)] StorageStartTimeDate {
+    0x07 => |bytes: [u8; 6]| #[derive(Debug, Copy, Clone)] StorageStartTimeDate {
         /// User Index Number
         pub user_index: u8 = bytes[0],
         /// Storage Segment Number
@@ -313,7 +313,7 @@ incoming_packages! {
         pub day: u8 = bytes[5],
     },
     /// Storage start time(time)
-    0x12 => |bytes: [u8; 6]| #[derive(Debug)] StorageStartTimeTime {
+    0x12 => |bytes: [u8; 6]| #[derive(Debug, Copy, Clone)] StorageStartTimeTime {
         /// User Index Number
         pub user_index: u8 = bytes[0],
         /// Storage Segment Number
@@ -326,7 +326,7 @@ incoming_packages! {
         pub second: u8 = bytes[4],
     },
     /// Storage Data Length
-    0x08 => |bytes: [u8; 6]| #[derive(Debug)] StorageDataLength {
+    0x08 => |bytes: [u8; 6]| #[derive(Debug, Copy, Clone)] StorageDataLength {
         /// User Index Number
         pub user_index: u8 = bytes[0],
         /// Data Segment Number
@@ -336,7 +336,7 @@ incoming_packages! {
             (bytes[2] as u32) + ((bytes[3] as u32) << 8) + ((bytes[4] as u32) << 16) + ((bytes[5] as u32) << 24),
     },
     /// Storage Data with PI
-    0x09 => |bytes: [u8; 4]| #[derive(Debug)] StorageDataWithPI {
+    0x09 => |bytes: [u8; 4]| #[derive(Debug, Copy, Clone)] StorageDataWithPI {
         /// SpO2
         pub spo2: u8 = bytes[0],
         /// Pulse rate
@@ -345,7 +345,7 @@ incoming_packages! {
         pub pi: u16 = (bytes[2] as u16) + ((bytes[3] as u16) << 8),
     },
     /// Storage Data Segment Amount
-    0x0A => |bytes: [u8; 2]| #[derive(Debug)] StorageDataSegmentAmount {
+    0x0A => |bytes: [u8; 2]| #[derive(Debug, Copy, Clone)] StorageDataSegmentAmount {
         /// User Index Number
         pub user_index: u8 = bytes[0],
         /// Segment Amount
@@ -359,19 +359,19 @@ incoming_packages! {
         pub code: u8 = bytes[1],
     },
     /// Device free feedback
-    0x0C => |_bytes: [u8; 0]| #[derive(Debug)] FreeFeedback {},
+    0x0C => |_bytes: [u8; 0]| #[derive(Debug, Copy, Clone)] FreeFeedback {},
     /// Device disconnect notice
-    0x0D => |bytes: [u8; 1]| #[derive(Debug)] DisconnectNotice {
+    0x0D => |bytes: [u8; 1]| #[derive(Debug, Copy, Clone)] DisconnectNotice {
         /// Disconnect reason
         pub reason: u8 = bytes[0],
     },
     /// PI Identifiers
-    0x0E => |bytes: [u8; 1]| #[derive(Debug)] PIIdentifiers {
+    0x0E => |bytes: [u8; 1]| #[derive(Debug, Copy, Clone)] PIIdentifiers {
         /// Whether to support PI in real-time data
         pub pi_support: u8 = bytes[0],
     },
     /// Storage Data
-    0x0F => |bytes: [u8; 6]| #[derive(Debug)] StorageData {
+    0x0F => |bytes: [u8; 6]| #[derive(Debug, Copy, Clone)] StorageData {
         /// SpO2 entry 1
         pub spo2_1: u8 = bytes[0],
         /// Pulse rate entry 1
@@ -386,19 +386,19 @@ incoming_packages! {
         pub pulse_rate_3: u8 = bytes[5],
     },
     /// User Amount
-    0x10 => |bytes: [u8; 1]| #[derive(Debug)] UserAmount {
+    0x10 => |bytes: [u8; 1]| #[derive(Debug, Copy, Clone)] UserAmount {
         /// Total User Number
         pub total_user: u8 = bytes[0],
     },
     /// Device Notice
-    0x11 => |bytes: [u8; 7]| #[derive(Debug)] DeviceNotice {
+    0x11 => |bytes: [u8; 7]| #[derive(Debug, Copy, Clone)] DeviceNotice {
         /// Device Notice Type
         pub device_notice: u8 = bytes[0],
         /// Notice Information
         pub device_info: [u8; 6] = [bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6]],
     },
     /// Storage Data Identifiers
-    0x15 => |bytes: [u8; 7]| #[derive(Debug)] StorageDataIdentifiers {
+    0x15 => |bytes: [u8; 7]| #[derive(Debug, Copy, Clone)] StorageDataIdentifiers {
         /// User Index Number
         pub user_index: u8 = bytes[0],
         /// Data Segment Number
