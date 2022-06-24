@@ -15,5 +15,6 @@ tokio-serial = "5.4.1"
 tokio-util = { version = "0.7.1", features = ["compat"] }
 chrono = "0.4.19"
 dialoguer = "0.10.1"
+csv-async = "1.2"
 
 contec-protocol = { path = "contec-protocol" }

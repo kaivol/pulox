@@ -13,7 +13,7 @@ use futures::{AsyncRead, AsyncWrite, FutureExt};
 use tokio::time::Instant;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
-use crate::output::{CsvWriter, OutputWriter};
+use crate::output::{CsvWriter, OutputMode, OutputWriter, Realtime, Storage};
 
 #[derive(Parser, Debug)]
 #[clap(author, version,
@@ -73,10 +73,15 @@ enum OutputFormat {
 }
 
 impl OutputFormat {
-    pub async fn get_writer(&self, args: String) -> Result<Box<dyn OutputWriter>> {
-        Ok(match self {
+    pub async fn get_writer<T: OutputMode>(
+        &self,
+        args: String,
+    ) -> Result<Box<dyn OutputWriter<T>>> {
+        let mut writer = match self {
             OutputFormat::Csv => Box::new(CsvWriter::new(args).await?),
-        })
+        };
+        OutputWriter::<T>::init(writer.as_mut()).await?;
+        Ok(writer)
     }
 }
 
@@ -132,7 +137,7 @@ async fn realtime<T: AsyncRead + AsyncWrite + Unpin>(
     args: RealtimeArgs,
 ) -> Result<()> {
     let mut writer = if let Some((format, output)) = args.format.zip(args.output) {
-        Some(format.get_writer(output).await?)
+        Some(format.get_writer::<Realtime>(output).await?)
     } else {
         None
     };
@@ -179,7 +184,7 @@ async fn realtime<T: AsyncRead + AsyncWrite + Unpin>(
                             samples += 1;
                         }
                         if let Some(ref mut writer) = writer {
-                            writer.write(d.pulse_rate, d.spo2).await?;
+                            writer.write_record(d).await?;
                         }
                     },
                     p => bail!("Unexpected Package {p:?}"),
@@ -198,7 +203,7 @@ async fn storage<T: AsyncRead + AsyncWrite + Unpin>(
     device: &mut PulseOximeter<T>,
     args: StorageArgs,
 ) -> Result<()> {
-    let mut writer = args.format.get_writer(args.output).await?;
+    let mut writer = args.format.get_writer::<Storage>(args.output).await?;
 
     let (user_index, segment_index) = get_user_and_segment(device).await?;
 
@@ -227,12 +232,12 @@ async fn storage<T: AsyncRead + AsyncWrite + Unpin>(
 
     for i in (0..data_length).step_by(6) {
         let d = expect_package_with_timeout!(device, StorageData).await?;
-        writer.write(d.spo2_1, d.pulse_rate_1).await?;
+        writer.write_record((d.spo2_1, d.pulse_rate_1)).await?;
         if i + 2 < data_length {
-            writer.write(d.spo2_2, d.pulse_rate_2).await?;
+            writer.write_record((d.spo2_2, d.pulse_rate_2)).await?;
         }
         if i + 4 < data_length {
-            writer.write(d.spo2_3, d.pulse_rate_3).await?;
+            writer.write_record((d.spo2_3, d.pulse_rate_3)).await?;
         }
     }
     println!("Finished reading and saving data");
