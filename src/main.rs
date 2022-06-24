@@ -110,8 +110,18 @@ async fn receive_package_with_timeout<T: AsyncRead + AsyncWrite + Unpin>(
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let port = tokio_serial::SerialStream::open(&tokio_serial::new(cli.port, 115200))
-        .context("Could not connect to device")?;
+    let port = tokio_serial::SerialStream::open(&tokio_serial::new(&cli.port, 115200)).context(
+        format!(
+            "Could not connect to device {}.\n\
+            Available ports: {}",
+            cli.port,
+            tokio_serial::available_ports()?
+                .into_iter()
+                .map(|p| p.port_name)
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+    )?;
 
     let mut device = PulseOximeter::new(port.compat());
 
