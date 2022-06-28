@@ -1,6 +1,7 @@
 mod output;
+mod realtime;
 
-use std::io::{stdout, Write};
+use std::fmt;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, ensure, Context, Error, Result};
@@ -9,11 +10,15 @@ use clap::{ArgEnum, Args, Parser, Subcommand};
 use contec_protocol::incoming_package::IncomingPackage;
 use contec_protocol::outgoing_package::ControlCommand;
 use contec_protocol::PulseOximeter;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use futures::{AsyncRead, AsyncWrite, FutureExt};
+use realtime::GraphTerminal;
+use tokio::time;
 use tokio::time::Instant;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
 use crate::output::{CsvWriter, OutputMode, OutputWriter, Realtime, Storage};
+use crate::realtime::{MinTerminal, RealtimeTerminal};
 
 #[derive(Parser, Debug)]
 #[clap(author, version,
@@ -72,6 +77,14 @@ enum OutputFormat {
     Csv,
 }
 
+impl fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", match self {
+            OutputFormat::Csv => "csv",
+        })
+    }
+}
+
 impl OutputFormat {
     pub async fn get_writer<T: OutputMode>(
         &self,
@@ -99,7 +112,7 @@ macro_rules! expect_package_with_timeout {
 async fn receive_package_with_timeout<T: AsyncRead + AsyncWrite + Unpin>(
     device: &mut PulseOximeter<T>,
 ) -> Result<IncomingPackage> {
-    match tokio::time::timeout(Duration::from_secs(1), device.receive_package()).await {
+    match time::timeout(Duration::from_secs(1), device.receive_package()).await {
         Ok(Ok(result)) => Ok(result),
         Ok(Err(err)) => Err(Error::from(err)),
         Err(_) => Err(Error::msg("Device did not send a response")),
@@ -135,18 +148,26 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Command::Realtime(args) => realtime(&mut device, args).await,
+        Command::Realtime(args) if args.no_console => {
+            realtime::<MinTerminal, _>(&mut device, args, cli.port).await
+        }
+        Command::Realtime(args) => realtime::<GraphTerminal, _>(&mut device, args, cli.port).await,
         Command::Storage(args) => storage(&mut device, args).await,
         Command::ClearStorage => clear_storage(&mut device).await,
         Command::SyncTime => sync_time(&mut device).await,
     }
 }
 
-async fn realtime<T: AsyncRead + AsyncWrite + Unpin>(
-    device: &mut PulseOximeter<T>,
+async fn realtime<T: RealtimeTerminal, U: AsyncRead + AsyncWrite + Unpin>(
+    device: &mut PulseOximeter<U>,
     args: RealtimeArgs,
+    port: String,
 ) -> Result<()> {
+    let mut terminal = T::new()?;
+    terminal.add_message(format!("Connected to device {port}"))?;
+
     let mut writer = if let Some((format, output)) = args.format.zip(args.output) {
+        terminal.add_message(format!("Saving to file {output} in {format} format"))?;
         Some(format.get_writer::<Realtime>(output).await?)
     } else {
         None
@@ -155,44 +176,30 @@ async fn realtime<T: AsyncRead + AsyncWrite + Unpin>(
     // Request real time data
     device.send_package(ControlCommand::ContinuousRealTimeData).await?;
 
-    let mut interval =
-        tokio::time::interval_at(Instant::now() + Duration::from_secs(5), Duration::from_secs(5));
-    if !args.no_console {
-        println!("Press Ctrl-C to cancel");
-        println!();
-        println!("Error │ SpO2 │ Pulse ");
-        println!("══════╪══════╪══════════════════════");
-    }
-    let mut samples = 0;
+    let mut terminal_interval = time::interval(Duration::from_millis(50));
+    let mut keep_alive_interval =
+        time::interval_at(Instant::now() + Duration::from_secs(5), Duration::from_secs(5));
+
+    terminal.add_message("Press ESC to exit")?;
     loop {
         futures::select! {
-            // Listen for Ctrl-C
-            _ = tokio::signal::ctrl_c().fuse() => {
-                eprintln!("\nGot Ctrl-C. Exiting");
-                break;
-            },
+            // Listen for Ctrl-C and ESC
+            event = terminal.handle_event().fuse() => {
+                match event {
+                    Ok(event) if event == Event::Key(KeyCode::Esc.into()) => break,
+                    Ok(event) if event == Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)) => break,
+                    _ => {}
+                }
+            }
             // Send InformDeviceConnected every 5 seconds
-            _ = interval.tick().fuse() => {
+            _ = keep_alive_interval.tick().fuse() => {
                 device.send_package(ControlCommand::InformDeviceConnected).await?;
             },
             // Read incoming packages
             package = receive_package_with_timeout(device).fuse() => {
                 match package? {
                     IncomingPackage::RealTimeData(d) => {
-                        if !args.no_console {
-                            print!("\r{:5} │ {:4} │ {:5} {}{}",
-                                d.probe_errors,
-                                d.spo2,
-                                d.pulse_rate,
-                                "■".repeat(d.bar_graph.into()),
-                                " ".repeat((15 - d.bar_graph).into()),
-                            );
-                            stdout().flush()?;
-                        } else {
-                            print!("\rSamples:{samples:10}");
-                            stdout().flush()?;
-                            samples += 1;
-                        }
+                        terminal.next_sample(d);
                         if let Some(ref mut writer) = writer {
                             writer.write_record(d).await?;
                         }
@@ -200,11 +207,19 @@ async fn realtime<T: AsyncRead + AsyncWrite + Unpin>(
                     p => bail!("Unexpected Package {p:?}"),
                 }
             }
+            // Update terminal
+            _ = terminal_interval.tick().fuse() => {
+                terminal.update()?;
+            }
         }
     }
 
     // Stop real time data
+    terminal.clear_messages()?;
+    terminal.add_message("Stop real time data")?;
     device.send_package(ControlCommand::StopRealTimeData).await?;
+
+    terminal.close()?;
 
     Ok(())
 }
