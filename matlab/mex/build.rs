@@ -6,7 +6,7 @@ fn main() {
     let matlab_lib = format!("{}{}", matlab_root, "extern\\lib\\win64\\microsoft");
     let matlab_include = format!("{}{}", matlab_root, "extern\\include");
 
-    println!("cargo:rustc-link-search={}", matlab_lib);
+    println!("cargo:rustc-link-search={matlab_lib}");
     println!("cargo:rustc-link-lib=libmex");
     println!("cargo:rustc-link-lib=libmx");
 
@@ -18,8 +18,6 @@ fn main() {
         // bindings for.
         .header("wrapper.h")
         .clang_arg(format!(r#"-I{}"#, matlab_include))
-        // .use_core()
-        // .ctypes_prefix("::core::ffi")
         .size_t_is_usize(true)
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
