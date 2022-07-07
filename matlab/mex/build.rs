@@ -18,6 +18,9 @@ fn main() {
         // bindings for.
         .header("wrapper.h")
         .clang_arg(format!(r#"-I{}"#, matlab_include))
+        // .use_core()
+        // .ctypes_prefix("::core::ffi")
+        .size_t_is_usize(true)
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
