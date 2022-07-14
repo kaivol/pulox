@@ -2,14 +2,6 @@ use core::alloc::{GlobalAlloc, Layout};
 
 use crate::bindings::{mxCalloc_800, mxFree_800, mxMalloc_800};
 
-// #[alloc_error_handler]
-// fn alloc_error(_layout: Layout) -> ! {
-//     unsafe {
-//         mexErrMsgTxt_800(b"Allocation failure".as_ptr() as _);
-//     }
-//     loop {}
-// }
-
 #[global_allocator]
 static MEX_ALLOCATOR: MexAllocator = MexAllocator;
 

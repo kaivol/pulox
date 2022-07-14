@@ -5,6 +5,7 @@ use std::{ptr, slice};
 use mex::bindings::*;
 use snafu::ensure_whatever;
 
+// Tries to get the data of the mxArray as a Rust slice
 pub fn get_slice<T: MatlabDataType>(array: *mut mxArray) -> crate::Result<&'static mut [T]> {
     ensure_whatever!(T::is_of_type(array), "array is of wrong type");
     let length = unsafe { mxGetNumberOfElements_800(array) };
@@ -12,12 +13,14 @@ pub fn get_slice<T: MatlabDataType>(array: *mut mxArray) -> crate::Result<&'stat
     Ok(unsafe { slice::from_raw_parts_mut(ptr, length) })
 }
 
+// Tries to get the data of a single element mxArray
 pub fn get_value<T: MatlabDataType>(array: *mut mxArray) -> crate::Result<T> {
     let slice = get_slice::<T>(array)?;
     ensure_whatever!(slice.len() == 1, "array must contain exactly one value");
     Ok(slice[0])
 }
 
+// Create an mxArray from the given slice
 pub fn create_array<T: MatlabDataType, const N: usize>(data: [T; N]) -> *mut mxArray {
     unsafe {
         let result =

@@ -1,8 +1,7 @@
 classdef Pulox < handle
-    %PULOX Summary of this class goes here
-    %   Detailed explanation goes here
-    
-    properties (SetAccess = private)
+    %PULOX Represents a connection to a Pulox PPG device
+
+    properties (Access = private)
         port
         state uint8
         callback function_handle
@@ -16,7 +15,18 @@ classdef Pulox < handle
                 port (1,:) char = 'COM3'
             end
             %PULOX Construct an instance of this class
-            %   Opens the connection with a hardware device
+            %   Opens the connection with a hardware device.
+            %   You must ensure that a compatible PPG is connected at the given serial port.
+            %
+            %   1. Argument (mandatory): callback
+            %       Callback which gets executed everytime a new measurement is received from the device
+            %       The callback is invoked with the following arguments:
+            %       1. measurement data: uint8 array [probe_errors, spo2, pulse_rate, pulse_waveform]
+            %       2. The Pulox object
+            %   2. Argument (optional): port
+            %       Name of serial port, defaults to 'COM3'
+
+            % Initialize state machine
             obj.state = mex_pulox(uint64(3), uint8.empty);
             obj.callback = callback;
             obj.port = serialport(port, 115200);
@@ -24,11 +34,14 @@ classdef Pulox < handle
         
         function startRealtime(obj)
             %startRealtime Start real time data
-            %   You need to make sure that the device is turned on
+            %   Instructs the device to start sending real time data.
+            %   You need to make sure that the device is turned on and ready to start sending
+            %   real time data.
             function callback(~, ~)
                 % Send InformDeviceConnected every 4 seconds
                 if seconds(datetime("now") - obj.wake) > 4
                     obj.wake = datetime("now");
+                    % Get InformDeviceConnected package from library and send it
                     bytes = mex_pulox(uint64(2), uint8.empty);
                     write(obj.port, bytes, "uint8");
                     disp("Send Keepalive");
@@ -46,27 +59,29 @@ classdef Pulox < handle
                     end
                 else
                     % Got sample
-                    obj.callback(res);
+                    obj.callback(res, obj);
                 end
-                   
             end
+            % Discard all leftover bytes
             if obj.port.NumBytesAvailable > 0
-
                 read(obj.port, obj.port.NumBytesAvailable, "uint8");
-            end
+                end
+            % COnfigure callback of serial port
             configureCallback(obj.port, "byte", 1, @callback);
 
             obj.wake = datetime("now");
 
-            % Send ContinuousRealTimeData
+            % Get ContinuousRealTimeData package from library and send it
             bytes = mex_pulox(uint64(0), uint8.empty);
             write(obj.port, bytes, "uint8");
         end
         
         function stopRealtime(obj)
-            %METHOD1 Stop real time data
+            %stopRealtime Stop real time data
+            %   Instructs the device to stop sending real time data.
+            %   Note that there could be still incoming measurements after the call to this method.
 
-            % Send StopRealTimeData
+            % Get StopRealTimeData package from library and send it
             bytes = mex_pulox(uint64(1), uint8.empty);
             write(obj.port, bytes, "uint8");
         end
