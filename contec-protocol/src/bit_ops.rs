@@ -1,5 +1,6 @@
 use core::ops::RangeInclusive;
 
+/// Set the bit at index `index` of `original` to `set`
 pub(crate) fn set_bit(original: &mut u8, index: usize, set: bool) {
     if set {
         *original |= 1 << index
@@ -8,10 +9,12 @@ pub(crate) fn set_bit(original: &mut u8, index: usize, set: bool) {
     }
 }
 
+/// Get bit at index `index` of `original`
 pub(crate) const fn get_bit(original: u8, index: usize) -> bool {
     (original & (1 << index)) != 0
 }
 
+/// Get the range of bits defined by `range` as `u8`
 pub(crate) const fn get_bit_range(original: u8, range: RangeInclusive<usize>) -> u8 {
     let mut mask = 0;
     let mut i = *range.start();

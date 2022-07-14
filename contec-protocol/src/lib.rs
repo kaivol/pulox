@@ -1,4 +1,4 @@
-//! Implements the communcation protocol of Contec pulse oximeters (V7.0)
+//! Implements the communication protocol of Contec pulse oximeters (V7.0)
 #![no_std]
 #![warn(missing_docs)]
 

@@ -68,20 +68,32 @@ macro_rules! incoming_packages {
 
         impl IncomingStateMachine {
             /// Resumes execution of the state machine
+            ///
+            /// # Arguments
+            ///
+            /// * `read` - A function which read new bytes into the provided buffer.
+            /// It must return `Poll::Pending` if no data is available for reading, or
+            /// `Poll::Ready(Ok(num_bytes_read))` otherwise.
             pub fn resume<
                 #[cfg(feature = "std")] E: snafu::AsErrorSource,
                 #[cfg(not(feature = "std"))] E,
-            >(&mut self, mut read: impl FnMut(&mut [u8]) -> Poll<core::result::Result<usize, E>>) -> Poll<$crate::Result<IncomingPackage, E>> {
+            >(
+                &mut self,
+                mut read: impl FnMut(&mut [u8]) -> Poll<core::result::Result<usize, E>>
+            ) -> Poll<$crate::Result<IncomingPackage, E>> {
                 loop {
                     match self {
                         IncomingStateMachine::None => {
+                            // Read single byte to identify package
                             let mut code = [0u8];
                             let count = ready!(read(&mut code))?;
                             if count == 0 {
                                 return Err(Error::DeviceReadZero).into();
                             }
                             if count > 1 {
-                                return Err(Error::DeviceReadTooMuch { requested: 1, reported: count }).into();
+                                return Err(
+                                    Error::DeviceReadTooMuch { requested: 1, reported: count }
+                                ).into();
                             }
                             match code[0] {
                                 $(
@@ -94,7 +106,12 @@ macro_rules! incoming_packages {
                             }
                         },
                         $(
-                            IncomingStateMachine::$name { ref mut buffer, ref mut received_bytes } => {
+                            IncomingStateMachine::$name {
+                                ref mut buffer,
+                                ref mut received_bytes
+                            } => {
+                                // Continue reading the required number of bytes for the signaled
+                                // package type
                                 let slice = &mut buffer[*received_bytes..($length + 1)];
                                 let count = ready!(read(slice))?;
                                 if count == 0 {
@@ -108,6 +125,7 @@ macro_rules! incoming_packages {
                                 }
                                 *received_bytes += count;
                                 if *received_bytes == ($length + 1) {
+                                    // Package received completely, decode
                                     let [high_byte, data @ ..] = *buffer;
                                     let decoded = match decode_high_byte((high_byte, data)){
                                         Ok(decoded) => decoded,
@@ -124,6 +142,7 @@ macro_rules! incoming_packages {
                                     };
                                     let data = $name::from_bytes(decoded);
 
+                                    // Reset state machine
                                     *self = IncomingStateMachine::None;
 
                                     return Poll::Ready(Ok(IncomingPackage::$name(data)))

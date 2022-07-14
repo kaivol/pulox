@@ -49,16 +49,19 @@ impl<T: AsyncReadWrite + Unpin> PulseOximeter<T> {
     {
         let buffer = bytes_from_package(package);
 
-        let unfinished_send = matches!(self.outgoing, OutgoingStatus::Some { .. });
+        // Determine whether the last send operation was completed
+        let mut unfinished_send = matches!(self.outgoing, OutgoingStatus::Some { .. });
 
         future::poll_fn(move |cx| loop {
             match self.outgoing {
+                // No ongoing send operation, so start next one
                 OutgoingStatus::None => {
                     self.outgoing = OutgoingStatus::Some {
                         buffer,
                         already_sent: 0,
                     }
                 }
+                // Ongoing send operation
                 OutgoingStatus::Some {
                     buffer,
                     ref mut already_sent,
@@ -74,8 +77,14 @@ impl<T: AsyncReadWrite + Unpin> PulseOximeter<T> {
                     }
                     *already_sent += bytes_written;
                     if *already_sent == 9 {
+                        // Current send operation finished
                         self.outgoing = OutgoingStatus::None;
-                        if !unfinished_send {
+                        if unfinished_send {
+                            // Old send operation is now finished, start sending actual data of
+                            // this function call
+                            unfinished_send = false;
+                        } else {
+                            // Send operation completed, return
                             return Poll::Ready(Ok(()));
                         }
                     }
