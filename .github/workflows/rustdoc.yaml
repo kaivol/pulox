@@ -15,13 +15,15 @@ jobs:
     - name: Install Rust toolchain
       uses: actions-rs/toolchain@v1
       with:
-        toolchain: stable
+        toolchain: nightly
         override: true
         profile: minimal
         components: rust-docs
 
     - name: Build Documentation
       uses: actions-rs/cargo@v1
+      env:
+        RUSTDOCFLAGS: "-Z unstable-options --extern-html-root-url snafu=https://docs.rs/snafu/0.7.1/ --extern-html-root-url futures_io=https://docs.rs/futures-io/0.3/"
       with:
         command: doc
         args: -p contec-protocol --no-deps
