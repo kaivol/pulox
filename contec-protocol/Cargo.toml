@@ -4,5 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-futures = { version = "0.3", default-features = true }
-thiserror = "1.0"
+futures = { version = "0.3", default-features = false, features = [] }
+snafu = { version = "0.7.1", default-features = false, features = ["rust_1_46"] }
+
+[features]
+default = ["std"]
+std = ["futures/std", "snafu/std"]

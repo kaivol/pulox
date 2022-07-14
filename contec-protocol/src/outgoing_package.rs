@@ -1,6 +1,34 @@
+#![allow(clippy::bool_assert_comparison)]
+
 //! Packages sent to the device
 
-use crate::pulse_oximeter::private::OutgoingPackage;
+use crate::bit_ops::get_bit;
+use crate::encoding::encode_high_byte;
+
+/// A package which can be sent to the device
+pub trait OutgoingPackage {
+    /// The package code
+    const CODE: u8;
+
+    /// Gives the 7 data bytes of the package
+    fn bytes(&self) -> [u8; 7];
+}
+
+/// Gives the byte representation for the package
+pub fn bytes_from_package<P>(package: P) -> [u8; 9]
+where
+    P: OutgoingPackage,
+{
+    debug_assert_eq!(get_bit(P::CODE, 7), false);
+
+    let (high_byte, data) = encode_high_byte(package.bytes());
+
+    let mut buffer = [0; 9];
+    buffer[0] = P::CODE;
+    buffer[1] = high_byte;
+    buffer[2..9].copy_from_slice(&data);
+    buffer
+}
 
 /// Control command
 pub enum ControlCommand {

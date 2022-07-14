@@ -279,7 +279,7 @@ async fn clear_storage<T: AsyncRead + AsyncWrite + Unpin>(
         .send_package(ControlCommand::DeleteStorageData(user_index, segment_index))
         .await?;
     let feedback = expect_package_with_timeout!(device, CommandFeedback).await?;
-    ensure!(feedback.code == 0, "Could not set device time: {:?}", feedback);
+    ensure!(feedback.code == 0, "Could not clear storage: {:?}", feedback);
 
     println!("Successfully deleted segment {} for user {}", segment_index, user_index);
     Ok(())

@@ -1,0 +1,15 @@
+[package]
+name = "mex_pulox"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type=["dylib"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+mex = { path = "../mex" }
+snafu = "0.7.1"
+contec-protocol = { path = "../../contec-protocol" }
+cstr = "0.2.10"
