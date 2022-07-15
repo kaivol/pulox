@@ -35,3 +35,8 @@ Note that the callback might still receive new measurements after the call to th
 ## Example
 For an example, look at `pulox_demo.m`.
 
+It produces a graph looking like this:
+
+![Matlab graph](demo_graph.png "Matlab Graph")
+
+The blue curve is the pulse waveform, yellow and red are the pulse rate and oxygen saturation respectively.
