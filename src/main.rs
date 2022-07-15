@@ -37,15 +37,26 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Read real time data
+    ///
+    /// Use --format and --output options to save the measurement data to a file.
+    /// Specify --no-console to disable rich console UI.
     Realtime(RealtimeArgs),
 
     /// Read storage data
+    ///
+    /// If the device supports multiple users or storage segment, you will be asked which one you
+    /// want to read.
+    ///
+    /// Use --format and --output options to specify output format and file.
     Storage(StorageArgs),
 
     /// Delete storage data segment
+    ///
+    /// If the device supports multiple users or storage segment, you will be asked which one you
+    /// want delete.
     ClearStorage,
 
-    /// Sync device time
+    /// Sync device time according to current host PC time
     SyncTime,
 }
 
@@ -57,7 +68,7 @@ struct RealtimeArgs {
     /// Output File
     #[clap(long, short, requires = "format")]
     output: Option<String>,
-    /// Show no output in console
+    /// Disable rich console UI
     #[clap(long)]
     no_console: bool,
 }
