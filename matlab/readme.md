@@ -3,6 +3,8 @@ Matlab integration uses the class defined in `Pulox.m` and the `mex_pulox` crate
 
 To use the `Pulox` class, you need to build this crate and rename the `mex_pulox.dll` to `mex_pulox.mexw64` and place it next to `Pulox.m`.
 
+Build using `cargo build -p mex_pulox`
+
 ## Usage
 The `Pulox` class represents a connection to a Pulox PPG device. 
 
