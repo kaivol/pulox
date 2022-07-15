@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["contec_protocol"] = [{"text":"impl&lt;E:&nbsp;<a class=\"trait\" href=\"https://docs.rs/snafu/0.7.1/snafu/trait.AsErrorSource.html\" title=\"trait snafu::AsErrorSource\">AsErrorSource</a>&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/convert/trait.From.html\" title=\"trait core::convert::From\">From</a>&lt;E&gt; for <a class=\"enum\" href=\"contec_protocol/enum.Error.html\" title=\"enum contec_protocol::Error\">Error</a>&lt;E&gt;","synthetic":false,"types":["contec_protocol::error::Error"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

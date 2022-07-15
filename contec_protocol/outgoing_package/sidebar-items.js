@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":[["ControlCommand","Control command"]],"fn":[["bytes_from_package","Gives the byte representation for the package"]],"struct":[["SetDeviceId","Set new device identifier"]],"trait":[["OutgoingPackage","A package which can be sent to the device"]]};
